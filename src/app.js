@@ -20,7 +20,7 @@ app.get("/health", (req, res) => {
         status: "ok",
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
-        service: "SensiMonitor AI API"
+        service: "SensiMonitor API Backup Service"
     });
 });
 
