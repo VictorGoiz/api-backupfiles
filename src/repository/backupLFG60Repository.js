@@ -5,14 +5,14 @@ import {
 } from "../config/influxdb.js";
 
 export const CAMPOS_SENSORES = [
-  "umidade",
-  "voc",
   "temperatura",
+  "umidade",
+  "co2",
+  "voc",
   "pm25",
   "pm10",
-  "led",
   "formaldeido",
-  "co2"
+  "led"
 ];
 
 export async function* buscarLeituras(inicio, fim) {

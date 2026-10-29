@@ -17,48 +17,86 @@ import {
   CAMPOS_SENSORES
 } from "../repository/backupLFG60Repository.js";
 
-function converterCSV(valor, coluna) {
+const SEPARADOR_CSV = ";";
+
+function formatarTimestamp(valor) {
   if (valor == null) return "";
 
-  let texto;
+  let data;
   if (valor instanceof Date) {
-    texto = valor.toISOString();
-  } else if (coluna === "time" && (typeof valor === "number" || typeof valor === "bigint")) {
-    const ms = typeof valor === "bigint" ? Number(valor) : valor;
-    const data = new Date(ms);
-    texto = Number.isNaN(data.getTime()) ? String(valor) : data.toISOString();
+    data = valor;
+  } else if (typeof valor === "number" || typeof valor === "bigint") {
+    data = new Date(Number(valor));
   } else {
-    texto = String(valor);
+    data = new Date(String(valor));
   }
 
-  // Proteção básica para CSV aberto em planilhas (apenas quando não é número negativo)
-  const ehNumeroNegativo = /^-\d+(\.\d+)?$/.test(texto);
-  const seguro = !ehNumeroNegativo && /^[=+\-@\t\r]/.test(texto)
-    ? "'" + texto
-    : texto;
+  if (Number.isNaN(data.getTime())) {
+    return String(valor);
+  }
 
-  return `"${seguro.replaceAll('"', '""')}"`;
+  return data.toISOString();
+}
+
+function converterCSV(valor, coluna) {
+  if (valor == null || valor === "") return "";
+
+  if (coluna === "time") {
+    return formatarTimestamp(valor);
+  }
+
+  if (typeof valor === "number" || typeof valor === "bigint") {
+    return String(valor);
+  }
+
+  if (typeof valor === "boolean") {
+    return valor ? "true" : "false";
+  }
+
+  const texto = valor instanceof Date ? valor.toISOString() : String(valor);
+
+  // Proteção básica contra CSV Injection apenas quando não é número negativo
+  const ehNumero = /^-?\d+(\.\d+)?$/.test(texto);
+  if (ehNumero) {
+    return texto;
+  }
+
+  const seguro = /^[=+\-@\t\r]/.test(texto) ? "'" + texto : texto;
+
+  if (
+    seguro.includes(SEPARADOR_CSV) ||
+    seguro.includes('"') ||
+    seguro.includes("\n") ||
+    seguro.includes("\r")
+  ) {
+    return `"${seguro.replaceAll('"', '""')}"`;
+  }
+
+  return seguro;
 }
 
 function ordenarColunas(chavesLeitura) {
   const conjunto = new Set(["time", ...chavesLeitura, ...CAMPOS_SENSORES]);
-  const extras = [...conjunto].filter(
+  const metadados = [...conjunto].filter(
     (col) => col !== "time" && !CAMPOS_SENSORES.includes(col)
   );
-  return ["time", ...extras, ...CAMPOS_SENSORES];
+  return ["time", ...metadados, ...CAMPOS_SENSORES];
 }
 
 async function gerarCSV(destino, inicio, fim) {
-  const arquivo = fs.createWriteStream(destino);
+  const arquivo = fs.createWriteStream(destino, { encoding: "utf8" });
   let total = 0;
   let colunas = null;
 
   try {
+    // BOM UTF-8 (\uFEFF) para que o Excel reconheça acentuação e separe as colunas por ';' automaticamente
+    arquivo.write("\uFEFF");
+
     for await (const leitura of buscarLeituras(inicio, fim)) {
       if (!colunas) {
         colunas = ordenarColunas(Object.keys(leitura));
 
-        if (!arquivo.write(colunas.join(",") + "\n")) {
+        if (!arquivo.write(colunas.join(SEPARADOR_CSV) + "\r\n")) {
           await once(arquivo, "drain");
         }
       }
@@ -66,7 +104,7 @@ async function gerarCSV(destino, inicio, fim) {
       const linha =
         colunas
           .map((coluna) => converterCSV(leitura[coluna], coluna))
-          .join(",") + "\n";
+          .join(SEPARADOR_CSV) + "\r\n";
 
       if (!arquivo.write(linha)) {
         await once(arquivo, "drain");
@@ -77,7 +115,7 @@ async function gerarCSV(destino, inicio, fim) {
 
     if (!colunas) {
       colunas = ["time", ...CAMPOS_SENSORES];
-      arquivo.write(colunas.join(",") + "\n");
+      arquivo.write(colunas.join(SEPARADOR_CSV) + "\r\n");
     }
 
     arquivo.end();
@@ -132,6 +170,7 @@ async function enviarSupabase(caminho, nome) {
       retryDelays: [0, 1000, 3000, 5000],
       headers: {
         authorization: `Bearer ${supabaseKey}`,
+        apikey: supabaseKey,
         "x-upsert": "true"
       },
       metadata: {
